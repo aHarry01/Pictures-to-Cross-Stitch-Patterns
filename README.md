@@ -14,3 +14,5 @@ dmcFlossColors.txt and crossStitching.py must be in the same directory. Run cros
     * Work in progress
     * Outputs a picture that uses a set number of DMC thread colors
 
+## License
+Licensed under MIT license. See LICENSE.txt for more information.

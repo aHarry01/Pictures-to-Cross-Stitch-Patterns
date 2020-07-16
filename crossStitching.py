@@ -1,6 +1,95 @@
 from sys import maxsize
-from PIL import Image
-from math import sqrt
+from PIL import Image, ImageDraw, ImageFont
+from math import sqrt, ceil
+
+#formatter for final output PDF pattern
+class Formatter:
+    def __init__(self, image, width, height, sectionSize, cellSize):
+        self.image = image
+        self.width = width
+        self.height = height
+        self.pages = []
+        self.sectionWidth = sectionSize # the width, in number of stitches, in a blown up section
+        self.sctnCellSize = cellSize #width, in pixels, of the cells in blown up section
+        self.fullCellSize = 0 #width, in pixels, of the cells in the full pattern
+
+
+    def calculateFullCellSize(self):
+        self.fullCellSize = int( (self.sectionWidth * self.sctnCellSize) / self.width  )
+
+    def createFullPattern(self):
+        self.calculateFullCellSize()
+        fullPattern = Image.new('RGB', (self.fullCellSize*self.width, self.fullCellSize*self.height))
+        fullPatternDraw = ImageDraw.Draw(fullPattern)
+        fullPatternDraw.rectangle([(0,0),(self.fullCellSize*self.width,self.fullCellSize*self.height)], fill='white') #white background
+        palette = self.image.getpalette()
+        
+        for x in range(self.width):
+            for y in range(self.height):
+                #draw a rectange with the correct color + pattern
+                i = self.image.getpixel((x,y))
+                color = (palette[i*3],palette[(i*3)+1],palette[(i*3)+2])
+                fullPatternDraw.rectangle([(x*self.fullCellSize, y*self.fullCellSize), ((x+1)*self.fullCellSize, (y-1)*self.fullCellSize)],fill=color, outline="gray")
+                   
+        self.pages.append(fullPattern)
+
+    def createThreadColorKey(self, colorsList):
+        keyPage = Image.new("L", (self.fullCellSize*self.width, self.fullCellSize*self.height))
+        font = ImageFont.truetype("arial.ttf",20)
+        draw = ImageDraw.Draw(keyPage)
+        draw.rectangle([0,0,(self.fullCellSize*self.width, self.fullCellSize*self.height)], fill="white")
+
+        seperator = "\n"
+        text = seperator.join(colorsList)
+        draw.multiline_text((10,10),text)
+        
+        self.pages.append(keyPage)
+
+    #will split the full pattern into a grid of smaller sections
+    #creates a page for each of these magnified sections of the full pattern
+    def createSections(self):
+
+        sectionHeight = int(self.sectionWidth * 1.2941) #standard letter paper aspect ratio
+        
+        sectionCols = ceil(self.width / self.sectionWidth)
+        sectionRows = ceil(self.height / sectionHeight)
+
+        palette = self.image.getpalette()
+        
+        for row in range(sectionRows):
+            for col in range(sectionCols):
+                self.pages.append(Image.new('RGB', (self.sectionWidth*self.sctnCellSize, sectionHeight * self.sctnCellSize)))
+                sectionDraw = ImageDraw.Draw(self.pages[-1])
+                sectionDraw.rectangle([(0,0), (self.sectionWidth*self.sctnCellSize, sectionHeight * self.sctnCellSize)],fill="white") #white background
+
+                #finds corresponding pixels in original image
+                leftPixel = col*self.sectionWidth
+                topPixel = row*sectionHeight
+                rightPixel = leftPixel + self.sectionWidth
+                bottomPixel = topPixel + sectionHeight
+
+                rightPixel = self.width if rightPixel > self.width else rightPixel
+                bottomPixel = self.height if bottomPixel > self.height else bottomPixel
+
+                for xPixel in range(leftPixel, rightPixel):
+                    for yPixel in range(topPixel, bottomPixel):
+                        i = self.image.getpixel((xPixel,yPixel))
+                        color = (palette[i*3],palette[(i*3)+1],palette[(i*3)+2])
+                        sectionDraw.rectangle([((xPixel-leftPixel)*self.sctnCellSize,(yPixel-topPixel)*self.sctnCellSize),
+                                              ((xPixel-leftPixel+1)*self.sctnCellSize,(yPixel-topPixel-1)*self.sctnCellSize)], fill=color, outline="gray")
+
+    #creates the pages of the pdf and adds it to self.pages
+    #first page = full pattern
+    #second page = list of DMC thread colors and their corresponding symbols
+    #last pages = pattern split up into blown-up sections that are easier to see and follow
+    def createPages(self, colorsList):
+        self.createFullPattern()
+        self.createThreadColorKey(colorsList)
+        self.createSections()
+        self.pages[0].save("finalPattern.pdf", "PDF",save_all=True,append_images=self.pages[1:])
+        
+        
+   
 
 #returns a dictionary of DMC floss colors
 def getFlossColors():
@@ -64,9 +153,7 @@ def replaceColors(image, colorDict):
         elif colorPalette[i] == 0 and colorPalette[i+1] == 0 and colorPalette[i+2] == 0:
                 cont = False
     image.putpalette(colorPalette)
-    return colorsList
-        
-
+    return list(dict.fromkeys(colorsList)) #remove any repeats that many show up because colors in the palette correspond to the same color
         
 def main():
 
@@ -86,21 +173,20 @@ def main():
     #instead of storing rgb vals in pixels, it stores the index to the palette
     colorNumber = int(input("How many colors do you want to use?"))
     quantizedColorImg = resizedImg.quantize(colorNumber)
-    quantizedColorImg.save("quantized.png")
-    
 
     #convert all palette colors to DMC floss colors
     colorsList = replaceColors(quantizedColorImg, colorDict)
-    quantizedColorImg.save("final.png")
-    print(colorsList)
+
+    #format PDF of pattern and save it
+    print("--- Final Pattern Formatting Options ---")
+    CELLSIZE = int(input("Pixel size of the cells in the magnified sections of the pattern? ")) #size, in pixels, of the cells in the blown up sections of the pattern
+    SCTNSIZE = int(input("Width per magnified section (in stitches) in the final pattern? ")) #width, in stitches, of the smaller blown up portions of the final pattern pdf. height will be int(SCTNSIZE*1.2941)
+    
+    formatter = Formatter(quantizedColorImg, width, height, SCTNSIZE, CELLSIZE)
+    formatter.createPages(colorsList)
 
 
-    #write the final cross stitch pattern to a pdf
-    xStitchPattern = Image.new('RGB', (width*25,height*25)) #this will hold the final formatted pattern
-
-
+    
 if __name__ == "__main__":
     main()
 
-#2. for each 'pixel', draw a rectangle on the cross stitch pattern with the correct DMC color, outlined in grey
-#3. each rectangle on xStitchPattern is 25 pixels height and width
